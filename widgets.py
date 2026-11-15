@@ -62,6 +62,40 @@ class ToolTip:
             self._hide()
 
 
+class RoundedPanel(tk.Canvas):
+    """A rounded card with a regular ttk frame inside for its contents."""
+
+    def __init__(self, parent: tk.Widget, padding: int | tuple[int, ...] = 0, radius: int = 16) -> None:
+        super().__init__(parent, bg=theme.BG, highlightthickness=0, bd=0)
+        self.radius = radius
+        self.body = ttk.Frame(self, style="Panel.TFrame", padding=padding)
+        self._window = self.create_window(radius, radius, window=self.body, anchor="nw")
+        self.bind("<Configure>", self._resize)
+
+    def _resize(self, event) -> None:
+        radius = min(self.radius, event.width // 2, event.height // 2)
+        self.coords(self._window, radius, radius)
+        self.itemconfigure(self._window, width=max(1, event.width - 2 * radius),
+                           height=max(1, event.height - 2 * radius))
+        self.delete("rounded-panel")
+        color = theme.PANEL
+        if radius == 0:
+            self.create_rectangle(0, 0, event.width, event.height, fill=color, outline=color,
+                                  tags="rounded-panel")
+        else:
+            self.create_rectangle(radius, 0, event.width - radius, event.height,
+                                  fill=color, outline=color, tags="rounded-panel")
+            self.create_rectangle(0, radius, event.width, event.height - radius,
+                                  fill=color, outline=color, tags="rounded-panel")
+            for x, y in (
+                (0, 0), (event.width - 2 * radius, 0),
+                (0, event.height - 2 * radius), (event.width - 2 * radius, event.height - 2 * radius),
+            ):
+                self.create_oval(x, y, x + 2 * radius, y + 2 * radius,
+                                 fill=color, outline=color, tags="rounded-panel")
+        self.tag_lower("rounded-panel")
+
+
 class ScrollFrame(ttk.Frame):
     """A vertically scrolling container; the scrollbar only appears when the content is taller."""
 
@@ -200,25 +234,39 @@ class StepSlider(ttk.Frame):
 
 
 class SwatchRow(ttk.Frame):
-    """A row of small color squares; clicking one calls ``command(hex_color)``."""
+    """A row of circular color swatches; clicking one calls ``command(hex_color)``."""
 
     def __init__(self, parent: tk.Widget, colors: list[tuple[str, str]], command: Callable[[str], None],
                  size: int = 22, gap: int = 6) -> None:
         super().__init__(parent, style="Panel.TFrame")
-        self._cells: dict[str, tk.Frame] = {}
+        self._cells: dict[str, tuple[tk.Canvas, int]] = {}
+        self._command = command
+        self._enabled = True
         for name, value in colors:
-            cell = tk.Frame(self, width=size, height=size, bg=value, cursor="hand2",
-                            highlightthickness=2, highlightbackground=theme.PANEL, highlightcolor=theme.PANEL)
+            cell = tk.Canvas(self, width=size, height=size, bg=theme.PANEL, cursor="hand2",
+                             highlightthickness=0, bd=0)
             cell.pack(side="left", padx=(0, gap))
-            cell.bind("<Button-1>", lambda _event, color=value: command(color))
+            inset = 2
+            dot = cell.create_oval(inset, inset, size - inset, size - inset,
+                                   fill=value, outline=theme.BORDER, width=1)
+            cell.bind("<Button-1>", lambda _event, color=value: self._choose(color))
             ToolTip(cell, name)
-            self._cells[value.upper()] = cell
+            self._cells[value.upper()] = (cell, dot)
+
+    def _choose(self, color: str) -> None:
+        if self._enabled:
+            self._command(color)
 
     def select(self, color: str | None) -> None:
         chosen = (color or "").upper()
-        for value, cell in self._cells.items():
-            ring = theme.ACCENT if value == chosen else theme.PANEL
-            cell.configure(highlightbackground=ring, highlightcolor=ring)
+        for value, (cell, dot) in self._cells.items():
+            cell.itemconfigure(dot, outline=theme.ACCENT if value == chosen else theme.BORDER,
+                               width=2 if value == chosen else 1)
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._enabled = enabled
+        for cell, _ in self._cells.values():
+            cell.configure(cursor="hand2" if enabled else "")
 
 
 class ColorField(ttk.Frame):
@@ -236,6 +284,8 @@ class ColorField(ttk.Frame):
         self._on_status = on_status
         self._title = title
         self.color = color
+        self.pick_button: ttk.Button | None = None
+        self.copy_button: ttk.Button | None = None
 
         self.swatches: SwatchRow | None = None
         if colors:
@@ -251,9 +301,11 @@ class ColorField(ttk.Frame):
         self.entry.pack(side="left")
         self.entry.bind("<Return>", self._commit)
         self.entry.bind("<FocusOut>", self._commit)
-        ttk.Button(row, text=pick_text, style="Small.TButton", command=self.pick).pack(side="left", padx=(8, 0))
+        self.pick_button = ttk.Button(row, text=pick_text, style="Small.TButton", command=self.pick)
+        self.pick_button.pack(side="left", padx=(8, 0))
         if show_copy:
-            ttk.Button(row, text="Copy", style="Small.TButton", command=self.copy).pack(side="left", padx=(6, 0))
+            self.copy_button = ttk.Button(row, text="Copy", style="Small.TButton", command=self.copy)
+            self.copy_button.pack(side="left", padx=(6, 0))
 
     def _picked(self, color: str) -> None:
         self.hex_var.set(color.upper())
@@ -288,6 +340,14 @@ class ColorField(ttk.Frame):
             self.swatches.select(color)
         if self.focus_get() is not self.entry:
             self.hex_var.set(color)
+
+    def set_enabled(self, enabled: bool) -> None:
+        self.entry.configure(state="normal" if enabled else "disabled")
+        for button in (self.pick_button, self.copy_button):
+            if button is not None:
+                button.state(["!disabled"] if enabled else ["disabled"])
+        if self.swatches is not None:
+            self.swatches.set_enabled(enabled)
 
 
 class PresetGrid(ttk.Frame):

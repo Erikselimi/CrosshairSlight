@@ -41,9 +41,9 @@ from dataclasses import dataclass
 
 from crosshair_data import DEFAULT_OUTLINE_COLOR
 
-# The largest reach of any design from its center, in unstretched pixels:
-# gap 40 + arm 80 + outline 6 = 126.
-MAX_REACH = 126
+# The largest reach includes 16 pixels of optional glow:
+# gap 40 + arm 80 + outline 6 + glow 16 = 142.
+MAX_REACH = 142
 OVERLAY_MARGIN = 10
 # The default outline color; each crosshair can override it with its own ``outline_color``.
 OUTLINE_COLOR = DEFAULT_OUTLINE_COLOR
@@ -277,7 +277,12 @@ def fit_scale(settings, half_extent: int, stretch: tuple[float, float] = (1.0, 1
     bounds = build_geometry(settings, 0, 0, 1.0, stretch).bounds()
     if bounds is None:
         return 1.0
-    reach = max(abs(bounds.x1), abs(bounds.y1), bounds.x2, bounds.y2)
+    reach_x = max(abs(bounds.x1), bounds.x2)
+    reach_y = max(abs(bounds.y1), bounds.y2)
+    if settings.glow_enabled and settings.glow_strength > 0 and settings.shape != "Image":
+        reach_x += settings.glow_size * stretch[0]
+        reach_y += settings.glow_size * stretch[1]
+    reach = max(reach_x, reach_y)
     return min(1.0, half_extent / reach) if reach else 1.0
 
 
@@ -316,6 +321,42 @@ def layer_colors(settings, background: str | None = None) -> tuple[str, str]:
     return outline, fill
 
 
+GLOW_BANDS = ((1.0, 0.22), (0.66, 0.46), (0.33, 0.76))
+
+
+def build_glow_layers(fill: list[Rect], settings, scale: float = 1.0,
+                      stretch: tuple[float, float] = (1.0, 1.0)) -> list[tuple[list[Rect], float]]:
+    """Create successively tighter silhouettes for a layered neon halo."""
+    if not settings.glow_enabled or settings.glow_strength == 0:
+        return []
+    radius_x = _scaled(settings.glow_size, scale * stretch[0], 1)
+    radius_y = _scaled(settings.glow_size, scale * stretch[1], 1)
+    layers: list[tuple[list[Rect], float]] = []
+    for radius_factor, strength_factor in GLOW_BANDS:
+        pad_x = max(1, _scaled(radius_x, radius_factor))
+        pad_y = max(1, _scaled(radius_y, radius_factor))
+        rects = [
+            Rect(rect.x1 - pad_x, rect.y1 - pad_y, rect.x2 + pad_x, rect.y2 + pad_y)
+            for rect in fill
+        ]
+        layers.append((rects, strength_factor))
+    return layers
+
+
+def glow_layer_colors(settings, background: str | None = None) -> list[str]:
+    """Return the halo's outer-to-inner colors for the preview or transparent overlay."""
+    colors = []
+    for _, strength_factor in GLOW_BANDS:
+        if background is None:
+            brightness = min(100, round(20 + settings.glow_strength * strength_factor * 0.75))
+            color = blend_color(settings.glow_color, "#000000", brightness)
+        else:
+            opacity = round(settings.opacity * settings.glow_strength * strength_factor / 100)
+            color = blend_color(settings.glow_color, background, opacity)
+        colors.append(color)
+    return colors
+
+
 def draw_on_canvas(canvas, settings, center_x: int, center_y: int, scale: float = 1.0,
                    background: str | None = None, tag: str = "crosshair",
                    stretch: tuple[float, float] = (1.0, 1.0)) -> None:
@@ -336,11 +377,21 @@ def draw_on_canvas(canvas, settings, center_x: int, center_y: int, scale: float 
         return
     
     geometry = build_geometry(settings, center_x, center_y, scale, stretch)
-    bounds = geometry.bounds()
-    if bounds is None:
+    glow_layers = build_glow_layers(geometry.fill, settings, scale, stretch)
+    rects = geometry.outline + geometry.fill + [rect for layer, _ in glow_layers for rect in layer]
+    if not rects:
         return
+    bounds = Rect(
+        min(rect.x1 for rect in rects),
+        min(rect.y1 for rect in rects),
+        max(rect.x2 for rect in rects),
+        max(rect.y2 for rect in rects),
+    )
     outline_color, color = layer_colors(settings, background)
     image = tk.PhotoImage(master=canvas, width=bounds.width, height=bounds.height)
+    for (layer, _), glow_color in zip(glow_layers, glow_layer_colors(settings, background)):
+        for rect in layer:
+            image.put(glow_color, to=(rect.x1 - bounds.x1, rect.y1 - bounds.y1, rect.x2 - bounds.x1, rect.y2 - bounds.y1))
     for layer, layer_color in ((geometry.outline, outline_color), (geometry.fill, color)):
         for rect in layer:
             image.put(layer_color, to=(rect.x1 - bounds.x1, rect.y1 - bounds.y1, rect.x2 - bounds.x1, rect.y2 - bounds.y1))

@@ -18,6 +18,10 @@ class Crosshair:
     shape: str = "Cross"
     color: str = "#E8FF45"
     outline_color: str = DEFAULT_OUTLINE_COLOR
+    glow_enabled: bool = False
+    glow_color: str = "#00E5FF"
+    glow_size: int = 8
+    glow_strength: int = 65
     size: int = 24
     vertical_size: int = 24
     gap: int = 6
@@ -53,6 +57,12 @@ PRESETS = {
     "BIG DOT": Crosshair(shape="Dot", color="#39FF14", size=12, vertical_size=12, gap=0, thickness=2, outline=1, center_dot=False),
     "SHOTGUN RING": Crosshair(shape="Circle", color="#FF5A36", size=44, vertical_size=44, gap=0, thickness=2, outline=1, center_dot=False),
     "NEON EDGE": Crosshair(color="#E8FF45", size=19, vertical_size=19, gap=5, thickness=3, outline=2, outline_color="#FF00E6"),
+    "NEON CYAN": Crosshair(color="#8CFFFF", outline_color="#123443", glow_enabled=True,
+                           glow_color="#00E5FF", size=18, vertical_size=18, gap=5, thickness=3, outline=2),
+    "NEON PINK": Crosshair(color="#FF75D8", outline_color="#40142F", glow_enabled=True,
+                           glow_color="#FF2D95", size=18, vertical_size=18, gap=5, thickness=3, outline=2),
+    "NEON LIME": Crosshair(color="#C8FF00", outline_color="#263414", glow_enabled=True,
+                           glow_color="#80FF00", size=18, vertical_size=18, gap=5, thickness=3, outline=2),
     "FROST BITE": Crosshair(color="#FFFFFF", size=16, vertical_size=16, gap=5, thickness=2, outline=2, outline_color="#2E7BFF", center_dot=False),
 }
 
@@ -75,8 +85,12 @@ def validate_settings(values: dict[str, Any] | Crosshair) -> Crosshair:
         raise ValueError("Color must be a six-digit HEX value such as #E8FF45.")
     if not isinstance(defaults["outline_color"], str) or not COLOR_PATTERN.fullmatch(defaults["outline_color"]):
         raise ValueError("Outline color must be a six-digit HEX value such as #101416.")
+    if not isinstance(defaults["glow_color"], str) or not COLOR_PATTERN.fullmatch(defaults["glow_color"]):
+        raise ValueError("Glow color must be a six-digit HEX value such as #00E5FF.")
     if not isinstance(defaults["center_dot"], bool):
         raise ValueError("Center dot must be true or false.")
+    if not isinstance(defaults["glow_enabled"], bool):
+        raise ValueError("Glow enabled must be true or false.")
     bounds = {
         "size": (1, 80),
         "vertical_size": (1, 80),
@@ -89,6 +103,8 @@ def validate_settings(values: dict[str, Any] | Crosshair) -> Crosshair:
         "offset_y": (-200, 200),
         "image_scale": (10, 400),
         "bg_tolerance": (0, 100),
+        "glow_size": (1, 16),
+        "glow_strength": (0, 100),
     }
     for key, (minimum, maximum) in bounds.items():
         value = defaults[key]
@@ -467,6 +483,8 @@ def export_cs2_commands(settings: Crosshair | dict[str, Any]) -> tuple[str, list
         warnings.append("The selected shape is approximated in CS2.")
     if current.opacity == 0:
         warnings.append("A fully transparent crosshair may not be visible in CS2.")
+    if current.glow_enabled and current.shape != "Image":
+        warnings.append("CS2 does not support Sightline's neon glow; the glow was not exported.")
     if current.outline > 0 and current.outline_color.upper() != Crosshair().outline_color.upper():
         warnings.append("CS2 does not let you choose the outline color; its exports always use the game's dark outline.")
     if current.offset_x or current.offset_y:

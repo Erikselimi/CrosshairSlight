@@ -11,7 +11,7 @@ import tkinter as tk
 from ctypes import wintypes
 from typing import Callable
 
-from crosshair_render import OUTLINE_COLOR, draw_on_canvas, overlay_extent
+from crosshair_render import OUTLINE_COLOR, draw_on_canvas, glow_layer_colors, overlay_extent
 
 KEEP_ALIVE_MS = 1000
 
@@ -34,13 +34,21 @@ class OverlayError(RuntimeError):
     """The overlay could not be created."""
 
 
-def pick_key_color(crosshair_color: str, outline_color: str = OUTLINE_COLOR) -> str:
-    """A see-through color that differs from both the fill and the outline colors."""
-    in_use = {crosshair_color.upper(), outline_color.upper()}
+def pick_key_color(crosshair_color: str, outline_color: str = OUTLINE_COLOR,
+                   extra_colors: tuple[str, ...] = ()) -> str:
+    """A see-through color that differs from every visible crosshair layer."""
+    in_use = {color.upper() for color in (crosshair_color, outline_color, *extra_colors)}
     for candidate in KEY_COLORS:
         if candidate.upper() not in in_use:
             return candidate
     return KEY_COLORS[-1]
+
+
+def _settings_key_color(settings) -> str:
+    glow_colors = ()
+    if settings.glow_enabled and settings.shape != "Image":
+        glow_colors = tuple(glow_layer_colors(settings))
+    return pick_key_color(settings.color, settings.outline_color, glow_colors)
 
 
 def enable_dpi_awareness() -> None:
@@ -161,7 +169,7 @@ class OverlayWindow:
         if os.name != "nt":
             raise OSError("The click-through overlay is available on Windows only.")
         settings = self.get_settings()
-        self.key = pick_key_color(settings.color, settings.outline_color)
+        self.key = _settings_key_color(settings)
         window = tk.Toplevel(self.root)
         self.window = window
         window.withdraw()
@@ -195,7 +203,7 @@ class OverlayWindow:
         if self.window is None or self.canvas is None:
             return
         settings = self.get_settings()
-        key = pick_key_color(settings.color, settings.outline_color)
+        key = _settings_key_color(settings)
         if key != self.key:
             self.key = key
             self.window.configure(bg=key)

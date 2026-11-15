@@ -22,7 +22,7 @@ from overlay import OverlayError, OverlayWindow, enable_dpi_awareness, screen_si
 from pixel_editor import PixelEditorWindow
 from profile_manager import ProfileManagerWindow
 from update_manager import UpdateError, UpdateInfo, check_for_update, download_update, launch_update_installer
-from widgets import ColorField, PresetGrid, ScrollFrame, StepSlider, SwatchRow, ToolTip, install_wheel_scrolling
+from widgets import ColorField, PresetGrid, RoundedPanel, ScrollFrame, StepSlider, SwatchRow, ToolTip, install_wheel_scrolling
 
 APP_NAME = "Sightline"
 APP_DATA = Path(os.environ.get("APPDATA", Path.home())) / "Sightline"
@@ -34,18 +34,24 @@ HOTKEYS = ("Ctrl+Shift+F8", "Alt+F8", "F8")
 RESOLUTION_CHOICES = ("Off", "1728x1080", "1720x1080", "1680x1050", "1440x1080", "1280x1024", "1280x960", "1024x768")
 SETTING_KEYS = ("shape", "size", "vertical_size", "gap", "thickness", "outline", "dot_size", "opacity",
                 "center_dot", "offset_x", "offset_y", "image_path", "image_scale",
-                "remove_background", "bg_tolerance")
+                "remove_background", "bg_tolerance", "glow_enabled", "glow_color", "glow_size", "glow_strength")
 
 COLOR_SWATCHES = [
-    ("Cyan", "#00FFFF"), ("Magenta", "#FF00FF"), ("White", "#FFFFFF"), ("Lime", "#39FF14"),
-    ("Acid", "#E8FF45"), ("Yellow", "#FFE600"), ("Orange", "#FF8A00"), ("Red", "#FF3B30"),
-    ("Pink", "#FF6FB5"),
+    ("Ice cyan", "#00F5FF"), ("Electric blue", "#168CFF"), ("Ultraviolet", "#8B5CFF"),
+    ("Laser magenta", "#F000FF"), ("Hot pink", "#FF2D95"), ("Red", "#FF3B55"),
+    ("Plasma orange", "#FF6D00"), ("Neon yellow", "#FFE600"), ("Toxic lime", "#B6FF00"),
+    ("Neon green", "#39FF14"), ("Mint", "#65E6D2"), ("White", "#FFFFFF"),
 ]
-# Outline colors worth having one click away: classic dark tones plus bright accents.
+# Dark outlines stay readable on bright fill colors; neon tones are available for double-color designs.
 OUTLINE_SWATCHES = [
-    ("Charcoal", "#101416"), ("Black", "#000000"), ("White", "#FFFFFF"), ("Cyan", "#00FFFF"),
-    ("Magenta", "#FF00FF"), ("Lime", "#39FF14"), ("Orange", "#FF8A00"), ("Indigo", "#6558F5"),
-    ("Neon pink", "#FF00E6"), ("Blue", "#2E7BFF"),
+    ("Midnight", "#080D15"), ("Charcoal", "#17202D"), ("White", "#FFFFFF"),
+    ("Ice cyan", "#00F5FF"), ("Electric blue", "#168CFF"), ("Ultraviolet", "#8B5CFF"),
+    ("Laser magenta", "#F000FF"), ("Hot pink", "#FF2D95"), ("Toxic lime", "#B6FF00"),
+    ("Neon green", "#39FF14"),
+]
+GLOW_SWATCHES = [
+    ("Ice cyan", "#00F5FF"), ("Electric blue", "#168CFF"), ("Ultraviolet", "#8B5CFF"),
+    ("Laser magenta", "#F000FF"), ("Hot pink", "#FF2D95"), ("Toxic lime", "#B6FF00"),
 ]
 # Sample backgrounds for checking how visible the crosshair is.
 BACKDROPS = [
@@ -62,10 +68,13 @@ SHAPE_LABELS = {
     "Image": {},
 }
 SHAPE_ACTIVE = {
-    "Cross": {"size", "vertical_size", "gap", "thickness", "outline", "dot_size", "opacity", "offset_x", "offset_y"},
-    "T": {"size", "vertical_size", "gap", "thickness", "outline", "opacity", "offset_x", "offset_y"},
-    "Dot": {"size", "outline", "opacity", "offset_x", "offset_y"},
-    "Circle": {"size", "vertical_size", "thickness", "outline", "opacity", "offset_x", "offset_y"},
+    "Cross": {"size", "vertical_size", "gap", "thickness", "outline", "dot_size", "opacity", "offset_x", "offset_y",
+              "glow_size", "glow_strength"},
+    "T": {"size", "vertical_size", "gap", "thickness", "outline", "opacity", "offset_x", "offset_y",
+          "glow_size", "glow_strength"},
+    "Dot": {"size", "outline", "opacity", "offset_x", "offset_y", "glow_size", "glow_strength"},
+    "Circle": {"size", "vertical_size", "thickness", "outline", "opacity", "offset_x", "offset_y",
+               "glow_size", "glow_strength"},
     "Image": {"opacity", "offset_x", "offset_y", "image_scale", "bg_tolerance"},
 }
 DEFAULT_LABELS = {
@@ -73,6 +82,7 @@ DEFAULT_LABELS = {
     "outline": "Outline", "dot_size": "Center dot size", "opacity": "Opacity",
     "offset_x": "Left / right", "offset_y": "Up / down", "image_scale": "Image size",
     "bg_tolerance": "Color tolerance",
+    "glow_size": "Halo size", "glow_strength": "Glow intensity",
 }
 # key: (low, high, suffix, hint)
 SLIDER_SPECS = {
@@ -87,6 +97,8 @@ SLIDER_SPECS = {
     "offset_y": (-200, 200, "px", "Move the crosshair up (negative) or down (positive) from the screen center."),
     "image_scale": (10, 400, "%", "Scale the selected image relative to its original dimensions."),
     "bg_tolerance": (0, 100, "", "Maximum per-channel color difference from the image's top-left pixel to remove."),
+    "glow_size": (1, 16, "px", "How far the neon halo spreads beyond the crosshair."),
+    "glow_strength": (0, 100, "%", "Strength of the outer-to-inner neon halo."),
 }
 
 
@@ -266,9 +278,10 @@ class SightlineApp:
         ):
             ttk.Button(footer, text=text, command=command).pack(side="right", padx=(6, 0))
 
-    def _build_preview(self, parent: ttk.Frame) -> ttk.Frame:
-        card = ttk.Frame(parent, style="Panel.TFrame", padding=20)
-        header = ttk.Frame(card, style="Panel.TFrame")
+    def _build_preview(self, parent: ttk.Frame) -> RoundedPanel:
+        card = RoundedPanel(parent, padding=4)
+        body = card.body
+        header = ttk.Frame(body, style="Panel.TFrame")
         header.pack(fill="x", pady=(0, 10))
         ttk.Label(header, text="LIVE PREVIEW", style="Section.TLabel").pack(side="left")
         ttk.Button(header, text="+", style="Step.TButton", width=2, takefocus=False,
@@ -282,7 +295,7 @@ class SightlineApp:
         ttk.Checkbutton(header, text="Grid", variable=self.grid_var, style="Panel.TCheckbutton",
                         command=self._view_changed).pack(side="right", padx=(0, 18))
 
-        self.preview = tk.Canvas(card, bg=self.preview_background, highlightthickness=0, bd=0, height=360,
+        self.preview = tk.Canvas(body, bg=self.preview_background, highlightthickness=0, bd=0, height=360,
                                  takefocus=True, cursor="fleur")
         self.preview.pack(fill="both", expand=True)
         self.preview.bind("<Configure>", lambda _event: self._draw_preview())
@@ -293,9 +306,9 @@ class SightlineApp:
         for key, (dx, dy) in {"Left": (-1, 0), "Right": (1, 0), "Up": (0, -1), "Down": (0, 1)}.items():
             self.preview.bind(f"<{key}>", lambda event, x=dx, y=dy: self._nudge(x, y, event))
 
-        self.summary_label = ttk.Label(card, text="", style="Panel.TLabel", justify="left")
+        self.summary_label = ttk.Label(body, text="", style="Panel.TLabel", justify="left")
         self.summary_label.pack(anchor="w", pady=(12, 0))
-        footer = ttk.Frame(card, style="Panel.TFrame")
+        footer = ttk.Frame(body, style="Panel.TFrame")
         footer.pack(fill="x", pady=(8, 0))
         ttk.Label(footer, text="Backdrop", style="PanelMuted.TLabel").pack(side="left", padx=(0, 8))
         self.backdrop_row = SwatchRow(footer, BACKDROPS, self._set_backdrop, size=20, gap=5)
@@ -305,12 +318,13 @@ class SightlineApp:
                   style="PanelMuted.TLabel").pack(side="right")
         return card
 
-    def _build_sidebar(self, parent: ttk.Frame) -> ttk.Frame:
-        card = ttk.Frame(parent, style="Panel.TFrame", padding=(18, 18, 12, 18))
-        card.rowconfigure(1, weight=1)
-        card.columnconfigure(0, weight=1)
+    def _build_sidebar(self, parent: ttk.Frame) -> RoundedPanel:
+        card = RoundedPanel(parent, padding=2)
+        body = card.body
+        body.rowconfigure(1, weight=1)
+        body.columnconfigure(0, weight=1)
 
-        bar = ttk.Frame(card, style="Panel.TFrame")
+        bar = ttk.Frame(body, style="Panel.TFrame")
         bar.grid(row=0, column=0, sticky="ew", padx=(0, 6), pady=(0, 12))
         saved_tab = self.preferences.get("tab")
         self.tab_var = tk.StringVar(value=saved_tab if saved_tab in ("presets", "design", "position") else "design")
@@ -319,7 +333,7 @@ class SightlineApp:
             ttk.Radiobutton(bar, text=text, value=value, variable=self.tab_var, style="Segment.TRadiobutton",
                             command=self._show_tab, takefocus=False).grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 2, 0))
 
-        stack = ttk.Frame(card, style="Panel.TFrame")
+        stack = ttk.Frame(body, style="Panel.TFrame")
         stack.grid(row=1, column=0, sticky="nsew")
         stack.rowconfigure(0, weight=1)
         stack.columnconfigure(0, weight=1)
@@ -397,7 +411,7 @@ class SightlineApp:
         self.fill_color_field = ColorField(
             parent, self.settings.color, self._set_color, COLOR_SWATCHES,
             on_invalid=self._invalid_color, on_status=self.flash,
-            title="Crosshair color", size=24, gap=7,
+            title="Crosshair color", size=18, gap=4,
         )
         self.fill_color_field.pack(fill="x", padx=(0, 6))
 
@@ -405,7 +419,7 @@ class SightlineApp:
         self.outline_color_field = ColorField(
             parent, self.settings.outline_color, self._set_outline_color, OUTLINE_SWATCHES,
             on_invalid=self._invalid_color, on_status=self.flash,
-            title="Outline color", size=24, gap=6,
+            title="Outline color", size=18, gap=4,
         )
         self.outline_color_field.pack(fill="x", padx=(0, 6))
         outline_tools = ttk.Frame(parent, style="Panel.TFrame")
@@ -420,6 +434,26 @@ class SightlineApp:
         ToolTip(swap_button, "Exchange the fill and outline colors.")
         self.outline_hint = ttk.Label(parent, text="", style="Warn.TLabel", wraplength=340, justify="left")
         self.outline_hint.pack(anchor="w", pady=(6, 0))
+
+        self._section(parent, "NEON GLOW", top=18)
+        glow_enabled = self.variables.setdefault(
+            "glow_enabled", tk.BooleanVar(value=self.settings.glow_enabled))
+        self.glow_check = ttk.Checkbutton(
+            parent, text="Enable layered neon halo", variable=glow_enabled,
+            style="Panel.TCheckbutton", command=self._changed,
+        )
+        self.glow_check.pack(anchor="w", pady=(0, 4))
+        ttk.Label(parent, text="Add a layered neon halo to Cross, T, Dot, or Circle shapes.",
+                  style="PanelMuted.TLabel", wraplength=330, justify="left").pack(anchor="w", pady=(0, 8))
+        self.variables.setdefault("glow_color", tk.StringVar(value=self.settings.glow_color))
+        self.glow_color_field = ColorField(
+            parent, self.settings.glow_color, self._set_glow_color, GLOW_SWATCHES,
+            on_invalid=self._invalid_color, on_status=self.flash,
+            title="Neon glow color", size=18, gap=4, pick_text="Pick…",
+        )
+        self.glow_color_field.pack(fill="x", padx=(0, 6))
+        self._add_slider(parent, "glow_size")
+        self._add_slider(parent, "glow_strength")
 
         self._section(parent, "SHAPE", top=18)
         self._add_slider(parent, "size")
@@ -509,15 +543,20 @@ class SightlineApp:
                 enabled = enabled and settings.center_dot
             if key == "bg_tolerance":
                 enabled = enabled and settings.remove_background
+            if key in ("glow_size", "glow_strength"):
+                enabled = enabled and settings.glow_enabled
             slider.set_enabled(enabled)
         self.dot_check.state(["!disabled"] if settings.shape == "Cross" else ["disabled"])
         self.remove_background_check.state(["!disabled"] if settings.shape == "Image" else ["disabled"])
+        self.glow_check.state(["!disabled"] if settings.shape != "Image" else ["disabled"])
+        self.glow_color_field.set_enabled(settings.shape != "Image")
         self.link_check.state(["!disabled"] if "vertical_size" in active else ["disabled"])
         match = next((name for name, preset in PRESETS.items()
                       if {**asdict(settings), "offset_x": 0, "offset_y": 0} == {**asdict(preset), "offset_x": 0, "offset_y": 0}), None)
         self.preset_grid.select(match)
         self.fill_color_field.set_color(settings.color)
         self.outline_color_field.set_color(settings.outline_color)
+        self.glow_color_field.set_color(settings.glow_color)
         self._update_outline_hint()
         self.backdrop_row.select(self.preview_background)
         self.zoom_label.configure(text=f"{self.preview_zoom}%")
@@ -536,6 +575,8 @@ class SightlineApp:
             enabled = key in active
             if key == "dot_size":
                 enabled = enabled and settings.center_dot
+            if key in ("glow_size", "glow_strength"):
+                enabled = enabled and settings.glow_enabled
             slider.set_enabled(enabled)
 
     def _update_summary(self) -> None:
@@ -543,6 +584,8 @@ class SightlineApp:
         colors = f"FILL {s.color}"
         if s.outline:
             colors += f"   ·   OUTLINE {s.outline_color}"
+        if s.glow_enabled and s.shape != "Image":
+            colors += f"   ·   GLOW {s.glow_color} ({s.glow_size}px / {s.glow_strength}%)"
         lines = [f"{s.shape.upper()}   ·   {colors}   ·   OPACITY {s.opacity}%"]
         if s.shape in ("Cross", "T"):
             lines.append(f"ARMS {s.size} × {s.vertical_size}   ·   GAP {s.gap}   ·   THICKNESS {s.thickness}   ·   OUTLINE {s.outline}")
@@ -715,6 +758,15 @@ class SightlineApp:
             self.settings.outline_color = validate_settings({"outline_color": color}).outline_color
         except ValueError:
             return
+        self._changed()
+
+    def _set_glow_color(self, color: str) -> None:
+        try:
+            clean = validate_settings({"glow_color": color}).glow_color
+        except ValueError:
+            return
+        self.variables["glow_color"].set(clean)
+        self.settings.glow_color = clean
         self._changed()
 
     def _invalid_color(self, message: str) -> None:
@@ -1026,7 +1078,7 @@ class SightlineApp:
         self.quick_fill_field = ColorField(
             content.inner, self.settings.color, self._set_color, COLOR_SWATCHES,
             on_invalid=self._invalid_color, on_status=self.flash,
-            title="Crosshair color", size=22, gap=6, pick_text="Pick…",
+            title="Crosshair color", size=20, gap=4, pick_text="Pick…",
         )
         self.quick_fill_field.pack(fill="x")
 
@@ -1034,7 +1086,7 @@ class SightlineApp:
         self.quick_outline_field = ColorField(
             content.inner, self.settings.outline_color, self._set_outline_color, OUTLINE_SWATCHES,
             on_invalid=self._invalid_color, on_status=self.flash,
-            title="Outline color", size=22, gap=6, pick_text="Pick…",
+            title="Outline color", size=20, gap=4, pick_text="Pick…",
         )
         self.quick_outline_field.pack(fill="x")
 

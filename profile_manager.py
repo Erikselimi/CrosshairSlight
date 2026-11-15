@@ -128,6 +128,8 @@ class ProfileManagerWindow:
         colors = f"Fill {settings.color}"
         if settings.outline:
             colors += f"  /  Outline {settings.outline_color}"
+        if settings.glow_enabled and settings.shape != "Image":
+            colors += f"  /  Glow {settings.glow_color}"
         self.preview_details.configure(text=f"{description}\n\nTags: {tags}\nShape: {settings.shape}  /  {colors}\nArms: {settings.size} x {settings.vertical_size}px  /  Gap: {settings.gap}px")
 
     def _draw_preview(self, settings: Crosshair) -> None:
@@ -244,6 +246,8 @@ class ProfileManagerWindow:
             canvas.pack(fill="both", expand=True, pady=12)
             canvas.after_idle(self._draw_comparison, canvas, settings)
             colors = f"{settings.color} / outline {settings.outline_color}" if settings.outline else settings.color
+            if settings.glow_enabled and settings.shape != "Image":
+                colors += f" / glow {settings.glow_color}"
             ttk.Label(panel, text=f"{settings.shape}  /  {colors}  /  {settings.size} x {settings.vertical_size}px  /  gap {settings.gap}px", style="Muted.TLabel").pack(anchor="w")
 
     @staticmethod
