@@ -29,7 +29,7 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --onefile --windowed
           --name Sightline
-          --icon "Neon Crosshair Customizer Icon.ico"
+          --icon "${{ github.workspace }}\Neon Crosshair Customizer Icon.ico"
           --hidden-import PIL --hidden-import PIL.Image --hidden-import PIL.ImageTk
           --specpath build --distpath dist crosshair_studio.py
       - name: Publish release
