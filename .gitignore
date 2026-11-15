@@ -3,3 +3,5 @@ __pycache__/
 build/
 dist/
 Sightline.exe
+/warn-Sightline.txt
+/xref-Sightline.html
